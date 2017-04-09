@@ -1,0 +1,136 @@
+---
+title: "Storm data analyses"
+author: "Ivan Lozo"
+date: '5 ožujka 2017 '
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE)
+```
+
+## Synopsis
+
+The goal of this analyses is to investigate which type of weather events are most harmful with respect to population health and which events have the greatest economic consequences across the United States. We will use NOAA Storm Database to answer these questions. Complete database has ben downloaded from Coursera web site [link](https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2).
+
+
+## Data Processing
+
+After downlaoding the database, we unzip the file in csv file and read it into r with fread function from data.table package.
+```{r Read data, echo=TRUE, message=FALSE, warning=FALSE, cache=TRUE}
+library(data.table)
+StormData <- fread("repdata%2Fdata%2FStormData.csv")
+
+```
+
+Database contains `r nrow(StormData)` rows with following structure.
+
+```{r }
+head(StormData)
+```
+
+We will keep only variables that we need and also filter out only records with needed damage values > 0.
+
+```{r filtering data}
+library(dplyr)
+library(stringr)
+StormData <- StormData%>%select(EVTYPE, FATALITIES, INJURIES, PROPDMG, PROPDMGEXP, CROPDMG, CROPDMGEXP )%>%filter(FATALITIES > 0 | INJURIES > 0 | PROPDMG > 0 | CROPDMG > 0)
+```
+
+Since damage in properties and crops are expressed in with exponents in variables PROPDMGEXP and CROPDMGEXP, we need to calculate real values. For this purpose we wrote function ExpTransform that we need to apply to amount of property and crops damage and put it in new variables PropDmg and CropDmg.
+
+Function code:
+```{r ExpTransform function, eval=FALSE}
+###Function for transforming exponents of damage
+
+Exp.Transform <- function(exp){
+        
+        if (exp %in% c("h","H"))
+                return(100)
+
+        else if (exp %in% c('k', 'K'))
+                return(1000)
+
+        else if (exp %in% c('m', 'M'))
+                return(1000000)
+        
+        else if (exp %in% c('b', 'B'))
+                return(1000000000)
+        
+        else if (exp %in% c('-', "?"))
+                return(0)
+        
+        else if (exp %in% c ("+",""))
+                return(1)
+        
+        else if (as.numeric(exp) %in% seq(0,10))
+                return(10)
+        
+        else if (is.na(exp))
+                return (0)
+        
+        else { stop("invalid value")
+                        }
+
+}
+```
+
+Transforming variables:
+```{r Dmg calculation}
+source('~/R/RepData_PeerAssessment2/ExpTransform.R')
+
+StormData$PropDmg <- StormData$PROPDMG * mapply(StormData$PROPDMGEXP,FUN = Exp.Transform)
+StormData$CropDmg <- StormData$CROPDMG * mapply(StormData$CROPDMGEXP,FUN = Exp.Transform)
+
+```
+
+Now, we will make some cleaning on events type. We will group all events described with key words like TORNADO, FLOOD etc. in the same group and convert it in the factor variables.
+```{r Cleaning EveType }
+
+StormData$EVTYPE <- toupper(StormData$EVTYPE)
+
+StormData$EVTYPE <- ifelse(str_detect(StormData$EVTYPE,"THUNDER")==1, "THUNDERSTORM",  StormData$EVTYPE)
+StormData$EVTYPE<- ifelse(str_detect(StormData$EVTYPE,"TORNADO")==1,"TORNADO", StormData$EVTYPE)
+StormData$EVTYPE<- ifelse(str_detect(StormData$EVTYPE, "FLOOD")==1, "FLOOD", StormData$EVTYPE)
+
+StormData$EVTYPE<- ifelse(str_detect(StormData$EVTYPE, "WIND")==1, "WIND", StormData$EVTYPE)
+StormData$EVTYPE<- ifelse(str_detect(StormData$EVTYPE, "SNOW")==1, "SNOW", StormData$EVTYPE)
+StormData$EVTYPE<- ifelse(str_detect(StormData$EVTYPE, "RAIN")==1, "RAIN", StormData$EVTYPE)
+
+StormData$EVTYPE<- ifelse(str_detect(StormData$EVTYPE, "HEAT")==1, "HEAT", StormData$EVTYPE)
+
+
+StormData$EVTYPE <- factor(StormData$EVTYPE)
+
+
+
+```
+Preparation of total casulties per event.
+```{r Totals Inj + Fat}
+library(forcats)
+Casulties <- StormData%>%group_by(EVTYPE)%>%summarise(Injuries=sum(INJURIES), Fatalities=sum(FATALITIES), Total=Injuries+Fatalities)%>%top_n(15)%>%mutate(EVTYPE=fct_reorder(EVTYPE, Total))
+```
+
+
+Preparation of economic damage per event.
+```{r Damage + Fat}
+library(forcats)
+Damage <- StormData%>%group_by(EVTYPE)%>%summarise(Prop=sum(PropDmg), Crop=sum(CropDmg), Total=Prop+Crop)%>%top_n(15)%>%mutate(EVTYPE=fct_reorder(EVTYPE, Total))
+```
+
+
+## Results
+
+
+
+```{r Injuries & Fatalities }
+
+library(ggplot2)
+ggplot(Casulties) + geom_col(aes(x=EVTYPE, y = Total)) + coord_flip() + labs(title="Number of casulties per event (Injuries + Fatalities)") 
+```
+
+```{r Damage }
+
+library(ggplot2)
+ggplot(Damage) + geom_col(aes(x=EVTYPE, y = Total)) + coord_flip() + labs(title="Economic damage  per event (Props + Crops)") 
+```
